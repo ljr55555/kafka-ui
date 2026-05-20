@@ -23,8 +23,12 @@ import io.kafbat.ui.service.rbac.extractor.GoogleAuthorityExtractor;
 import io.kafbat.ui.service.rbac.extractor.OauthAuthorityExtractor;
 import io.kafbat.ui.service.rbac.extractor.ProviderAuthorityExtractor;
 import jakarta.annotation.PostConstruct;
+import java.security.Principal;
+import java.util.Collection;
 import java.util.Collections;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.function.Predicate;
@@ -39,8 +43,11 @@ import org.apache.commons.lang3.StringUtils;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.core.env.Environment;
 import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.context.ReactiveSecurityContextHolder;
 import org.springframework.security.core.context.SecurityContext;
+import org.springframework.security.oauth2.core.OAuth2AuthenticatedPrincipal;
 import org.springframework.security.oauth2.client.registration.InMemoryReactiveClientRegistrationRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.util.Assert;
@@ -63,7 +70,6 @@ public class AccessControlService {
   private boolean rbacEnabled = false;
   @Getter
   private Set<ProviderAuthorityExtractor> oauthExtractors = Collections.emptySet();
-
 
   @PostConstruct
   public void init() {
@@ -121,10 +127,10 @@ public class AccessControlService {
 
   private List<Permission> getUserPermissions(AuthenticatedUser user, @Nullable String clusterName) {
     List<Role> filteredRoles = properties.getRoles()
-            .stream()
-            .filter(filterRole(user))
-            .filter(role -> clusterName == null || role.getClusters().stream().anyMatch(clusterName::equalsIgnoreCase))
-            .toList();
+        .stream()
+        .filter(filterRole(user))
+        .filter(role -> clusterName == null || role.getClusters().stream().anyMatch(clusterName::equalsIgnoreCase))
+        .toList();
 
     // if no roles are found, check if default role is set
     if (filteredRoles.isEmpty() && properties.getDefaultRole() != null) {
@@ -132,16 +138,136 @@ public class AccessControlService {
     }
 
     return filteredRoles.stream()
-            .flatMap(role -> role.getPermissions().stream())
-            .toList();
+        .flatMap(role -> role.getPermissions().stream())
+        .toList();
   }
 
   public static Mono<AuthenticatedUser> getUser() {
     return ReactiveSecurityContextHolder.getContext()
         .map(SecurityContext::getAuthentication)
-        .filter(authentication -> authentication.getPrincipal() instanceof RbacUser)
-        .map(authentication -> ((RbacUser) authentication.getPrincipal()))
-        .map(user -> new AuthenticatedUser(user.name(), user.groups()));
+        .flatMap(authentication -> Mono.justOrEmpty(toAuthenticatedUser(authentication)));
+  }
+
+  @Nullable
+  private static AuthenticatedUser toAuthenticatedUser(@Nullable Authentication authentication) {
+    if (authentication == null) {
+      return null;
+    }
+
+    Object principal = authentication.getPrincipal();
+    if (principal instanceof RbacUser user) {
+      return new AuthenticatedUser(user.name(), user.groups());
+    }
+
+    String principalName = resolvePrincipalName(authentication);
+    if (StringUtils.isBlank(principalName)) {
+      return null;
+    }
+
+    return new AuthenticatedUser(principalName, resolveGroups(authentication));
+  }
+
+  private static Collection<String> resolveGroups(Authentication authentication) {
+    Set<String> groups = new LinkedHashSet<>();
+
+    Object principal = authentication.getPrincipal();
+    if (principal instanceof OAuth2AuthenticatedPrincipal oauth2Principal) {
+      Map<String, Object> attributes = oauth2Principal.getAttributes();
+
+      addAttributeValues(groups, attributes.get("groups"));
+      addAttributeValues(groups, attributes.get("roles"));
+      addAttributeValues(groups, attributes.get("memberOf"));
+      addAttributeValues(groups, attributes.get("authorities"));
+    }
+
+    authentication.getAuthorities()
+        .stream()
+        .map(GrantedAuthority::getAuthority)
+        .filter(StringUtils::isNotBlank)
+        .forEach(groups::add);
+
+    return List.copyOf(groups);
+  }
+
+  private static void addAttributeValues(Set<String> target, @Nullable Object value) {
+    if (value == null) {
+      return;
+    }
+
+    if (value instanceof Collection<?> collection) {
+      collection.stream()
+          .filter(Objects::nonNull)
+          .map(Object::toString)
+          .filter(StringUtils::isNotBlank)
+          .forEach(target::add);
+      return;
+    }
+
+    if (value.getClass().isArray()) {
+      Object[] array = (Object[]) value;
+      for (Object item : array) {
+        if (item != null) {
+          String str = item.toString();
+          if (StringUtils.isNotBlank(str)) {
+            target.add(str);
+          }
+        }
+      }
+      return;
+    }
+
+    String str = value.toString();
+    if (StringUtils.isNotBlank(str)) {
+      target.add(str);
+    }
+  }
+
+  @Nullable
+  private static String resolvePrincipalName(Authentication authentication) {
+    String name = authentication.getName();
+    if (StringUtils.isNotBlank(name)) {
+      return name;
+    }
+
+    Object principal = authentication.getPrincipal();
+    if (principal instanceof OAuth2AuthenticatedPrincipal oauth2Principal) {
+      Map<String, Object> attributes = oauth2Principal.getAttributes();
+
+      String clientId = getStringAttribute(attributes, "client_id");
+      if (StringUtils.isNotBlank(clientId)) {
+        return clientId;
+      }
+
+      String sub = getStringAttribute(attributes, "sub");
+      if (StringUtils.isNotBlank(sub)) {
+        return sub;
+      }
+
+      String username = getStringAttribute(attributes, "username");
+      if (StringUtils.isNotBlank(username)) {
+        return username;
+      }
+
+      String preferredUsername = getStringAttribute(attributes, "preferred_username");
+      if (StringUtils.isNotBlank(preferredUsername)) {
+        return preferredUsername;
+      }
+    }
+
+    if (principal instanceof Principal principalObj) {
+      String principalName = principalObj.getName();
+      if (StringUtils.isNotBlank(principalName)) {
+        return principalName;
+      }
+    }
+
+    return null;
+  }
+
+  @Nullable
+  private static String getStringAttribute(Map<String, Object> attributes, String key) {
+    Object value = attributes.get(key);
+    return value != null ? value.toString() : null;
   }
 
   private boolean isClusterAccessible(String clusterName, AuthenticatedUser user) {
@@ -150,7 +276,7 @@ public class AccessControlService {
         .stream()
         .filter(filterRole(user))
         .anyMatch(role -> role.getClusters().stream().anyMatch(clusterName::equalsIgnoreCase));
-    
+
     return isAccessible || properties.getDefaultRole() != null;
   }
 
@@ -244,7 +370,8 @@ public class AccessControlService {
   }
 
   private Predicate<Role> filterRole(AuthenticatedUser user) {
-    return role -> user.groups().contains(role.getName());
+    return role -> user.groups().contains(role.getName())
+        || role.getName().equalsIgnoreCase(user.principal());
   }
 
   /**

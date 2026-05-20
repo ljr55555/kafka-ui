@@ -41,33 +41,38 @@ public interface DynamicConfigMapper {
   }
 
   default OAuth2ResourceServerProperties map(ApplicationConfigPropertiesAuthOauth2ResourceServerDTO value) {
-    if (value != null) {
-      OAuth2ResourceServerProperties result = new OAuth2ResourceServerProperties();
-      if (value.getJwt() != null) {
-        OAuth2ResourceServerProperties.Jwt jwt = result.getJwt();
-
-        ApplicationConfigPropertiesAuthOauth2ResourceServerJwtDTO source = value.getJwt();
-        Optional.ofNullable(source.getJwsAlgorithms()).ifPresent(jwt::setJwsAlgorithms);
-        Optional.ofNullable(source.getJwkSetUri()).ifPresent(jwt::setJwkSetUri);
-        Optional.ofNullable(source.getIssuerUri()).ifPresent(jwt::setIssuerUri);
-        Optional.ofNullable(source.getPublicKeyLocation())
-            .map(this::mapResource)
-            .ifPresent(jwt::setPublicKeyLocation);
-        Optional.ofNullable(source.getAudiences()).ifPresent(jwt::setAudiences);
-        Optional.ofNullable(source.getAuthoritiesClaimName()).ifPresent(jwt::setAuthoritiesClaimName);
-        Optional.ofNullable(source.getAuthoritiesClaimDelimiter()).ifPresent(jwt::setAuthoritiesClaimDelimiter);
-        Optional.ofNullable(source.getAuthorityPrefix()).ifPresent(jwt::setAuthorityPrefix);
-        Optional.ofNullable(source.getPrincipalClaimName()).ifPresent(jwt::setPrincipalClaimName);
-      }
-      if (value.getOpaquetoken() != null) {
-        OAuth2ResourceServerProperties.Opaquetoken opaquetoken = result.getOpaquetoken();
-        ApplicationConfigPropertiesAuthOauth2ResourceServerOpaquetokenDTO source = value.getOpaquetoken();
-        Optional.ofNullable(source.getClientId()).ifPresent(opaquetoken::setClientId);
-        Optional.ofNullable(source.getClientSecret()).ifPresent(opaquetoken::setClientSecret);
-        Optional.ofNullable(source.getIntrospectionUri()).ifPresent(opaquetoken::setIntrospectionUri);
-      }
+    if (value == null) {
+      return null;
     }
-    return null;
+
+    OAuth2ResourceServerProperties result = new OAuth2ResourceServerProperties();
+
+    if (value.getJwt() != null) {
+      OAuth2ResourceServerProperties.Jwt jwt = result.getJwt();
+
+      ApplicationConfigPropertiesAuthOauth2ResourceServerJwtDTO source = value.getJwt();
+      Optional.ofNullable(source.getJwsAlgorithms()).ifPresent(jwt::setJwsAlgorithms);
+      Optional.ofNullable(source.getJwkSetUri()).ifPresent(jwt::setJwkSetUri);
+      Optional.ofNullable(source.getIssuerUri()).ifPresent(jwt::setIssuerUri);
+      Optional.ofNullable(source.getPublicKeyLocation())
+          .map(this::mapResource)
+          .ifPresent(jwt::setPublicKeyLocation);
+      Optional.ofNullable(source.getAudiences()).ifPresent(jwt::setAudiences);
+      Optional.ofNullable(source.getAuthoritiesClaimName()).ifPresent(jwt::setAuthoritiesClaimName);
+      Optional.ofNullable(source.getAuthoritiesClaimDelimiter()).ifPresent(jwt::setAuthoritiesClaimDelimiter);
+      Optional.ofNullable(source.getAuthorityPrefix()).ifPresent(jwt::setAuthorityPrefix);
+      Optional.ofNullable(source.getPrincipalClaimName()).ifPresent(jwt::setPrincipalClaimName);
+    }
+
+    if (value.getOpaquetoken() != null) {
+      OAuth2ResourceServerProperties.Opaquetoken opaquetoken = result.getOpaquetoken();
+      ApplicationConfigPropertiesAuthOauth2ResourceServerOpaquetokenDTO source = value.getOpaquetoken();
+      Optional.ofNullable(source.getClientId()).ifPresent(opaquetoken::setClientId);
+      Optional.ofNullable(source.getClientSecret()).ifPresent(opaquetoken::setClientSecret);
+      Optional.ofNullable(source.getIntrospectionUri()).ifPresent(opaquetoken::setIntrospectionUri);
+    }
+
+    return result;
   }
 
   default Resource mapResource(String filename) {
